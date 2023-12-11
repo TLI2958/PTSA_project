@@ -7,6 +7,7 @@ import itertools
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import re
+import os
 from datetime import datetime
 import seaborn as sns
 # from darts.models.forecasting import arima
@@ -18,6 +19,7 @@ from sklearn.metrics import mean_squared_error
 from scipy.fft import fft, rfft
 from scipy.fft import fftfreq, rfftfreq
 from scipy import optimize
+from scipy.stats import norm
 from math import sqrt
 import joblib
 from joblib import dump, load
@@ -27,6 +29,7 @@ warnings.filterwarnings('ignore')
 from warnings import catch_warnings
 
 palette = sns.color_palette("mako_r", 6)
+
 
 ## search for the best model
 # P <= 3, Q <= 1; p <= 3, q <= 27 -> impossible to solve for such a range. so truncate.
@@ -124,6 +127,60 @@ def grid_search(train, val, col, n_val, cfg_list, parallel=True):
     # sort configs by error, asc
     scores.sort(key=lambda x: x[1])
     return scores
+
+
+## Fourier Transform from lab_10
+def calculate_fourier_series(dt: float, signal: np.ndarray):
+    """Calculate the Fourier series coefficients using the Fourier transform.
+
+    Args:
+        dt: Interval between samples.
+        signal: Real signal at each point in time.
+
+    Returns:
+        Frequencies, A_n, and B_n coefficients for the fourier series
+        representaiton.
+
+    Notes:
+        Take advantage of numpy.fft. Remember that the signal is real not
+        complex. You may want to take advantage of the norm keyword.
+    """
+    # Placeholders.
+    a_n = None
+    b_n = None
+
+    # TODO: Calculate the frequencies of each A_n and B_n. Remember that the
+    # maximum frequency you can measure (and the maximum value numpy.fft will return
+    # for real-valued signals) will be the Nyquist frequency.
+    frequencies = np.abs(np.fft.fftfreq(n = len(signal), d = dt)[:len(signal)//2 + 1])
+
+    # TODO: Calculate the fourier series coefficients. Compare the equations from
+    # the notes, and read the numpy.fft documentation carefully.
+    fourier_transform = np.fft.fft(signal, n = len(signal), norm = 'forward')[:len(signal)//2 + 1] # \tilde x_n = c_n
+    a_n = 2*fourier_transform.real
+    b_n = -2*fourier_transform.imag
+
+    return frequencies, a_n, b_n
+
+
+def reconstructed_signal(frequency_mask: float, signal: np.ndarray):
+    """Return the signal with a mask applied to the Fourier series.
+
+    Args:
+        frequency_mask: Terms in the Fourier series to mask.
+        signal: Real signal at each point in time.
+
+    Returns:
+        Reconstructed signal after frequency mask has been applied.
+
+    Notes:
+        Take advantage of numpy.fft. Remember that the signal is real not
+        complex.
+    """
+    # TODO: Calculate the fourier transform, apply the mask,
+    # and reverse the transformation.
+    fourier_transform = np.fft.fft(signal, n = len(signal), norm = 'forward')
+    return np.fft.ifft(fourier_transform * frequency_mask, norm = 'forward').real
 
 
 ## naive version
@@ -226,7 +283,7 @@ def plot_triple_built_in(df, n_lags_ar, n_lags_ma, seasonality, lag_ma, col, fig
 
 
     ## forecast plot
-def plot_forecast(X_train, X_val, preds, n_from_train_end, n_from_val_start, col, pred_col, save = False):
+def plot_forecast(X_train, X_val, preds, n_from_train_end, n_from_val_start, col, pred_col, save = False, label = ''):
     fig, ax = plt.subplots(1, 1, figsize=(22, 5), dpi=200)
     fontsize = 20
     labelsize = 12
@@ -257,3 +314,66 @@ def plot_forecast(X_train, X_val, preds, n_from_train_end, n_from_val_start, col
     ax.legend(fontsize=12)
     if save:
         fig.savefig(f'pred_{n_from_train_end}_{n_from_val_start}.png', bbox_inches = 'tight')
+
+        
+
+## modified, somewhat hard-coded ...
+## used for error analysis at the end
+def plot_error(df, figsize=(20,8)):
+    '''
+    There must have 3 columns following this order: Temperature, Prediction, Error
+    '''
+    colors = ['#7fcdbb', '#2c7fb8']
+    palette = sns.color_palette("mako_r", 6)
+    fontsize = 10
+
+    plt.figure(figsize=figsize)
+    plt.suptitle('Error Analysis', fontsize = 20, y = 1.0)
+
+    ax1 = plt.subplot2grid((2,2), (0,0))
+    ax2 = plt.subplot2grid((2,2), (0,1))
+    ax3 = plt.subplot2grid((2,2), (1,0))
+    ax4 = plt.subplot2grid((2,2), (1,1))
+    
+    years_txt, years = np.unique(df['Time'].dt.year, return_index=True)
+    #Plotting the Current and Predicted values
+    sns.lineplot(x= df.index, y= df['T_AVG'],
+                 color=palette[1], lw = 1, label= 'val', alpha=0.5, ax=ax1)
+    sns.lineplot(x= df.index, y= df['preds'],
+                 color=palette[-1], lw = 1, label= 'pred', alpha=1.0, ax=ax1)
+
+    ax1.set_xticklabels([])
+    ax1.set_xticks(years)
+    ax1.set_xticklabels(years_txt, rotation=45, ha='right', fontsize = fontsize)
+    ax1.set_xlabel('Year', fontsize = 15)
+    ax1.set_ylabel('T_AVG', fontsize = 15)
+    ax1.set_title('Current and Predicted Values', fontsize = 18, y = 1.05)
+    
+    # Residual vs Predicted values
+    ax2.scatter(df.preds, df.error, color = palette[0], alpha = 0.7)
+    ax2.set_xlabel('Predicted Values', fontsize = 15)
+    ax2.set_ylabel('Errors', fontsize = 15)
+    ax2.set_title('Errors versus Predicted Values', fontsize = 18, y = 1.05)
+    
+    ## QQ Plot of the residual
+    qqplot = sm.qqplot(data = df.error, dist = norm, loc = df.error.mean(),
+                            scale = df.error.std(),
+                           markerfacecolor= palette[0], markeredgecolor= 'None',
+                           markersize = 5.5, alpha = 0.3, ax = ax3)
+    sm.qqline(line='45', color = palette[-1], lw = 1.5, ax = ax3)
+    ax3.set_xlabel('Theoretical Quantiles', fontsize = 15)
+    ax3.set_ylabel('Sample Quantiles', fontsize = 15)
+    ax3.set_title('QQ plot', fontsize = 18, y = 1.05)
+    
+    # Autocorrelation plot of the residual
+    plot_acf(df.error, lags= 50, zero=False, ax=ax4)
+    ax4.set_ylim([-0.5, 0.5])
+    ax4.set_title('ACF Estimate', fontsize=18, y = 1.05)
+    ax4.set_xlabel(r'$|h|$', fontsize=15)
+    ax4.set_ylabel(r'$\rho(|h|)$', fontsize=15)
+    ax4.set_xticklabels([f'{int(i)}' for i in ax4.get_xticks()], rotation=45, ha='right', fontsize = fontsize)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    plt.savefig('error_analysis.png', bbox_inches = 'tight')

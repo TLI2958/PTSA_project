@@ -374,6 +374,6 @@ def plot_error(df, figsize=(20,8)):
     ax4.set_xticklabels([f'{int(i)}' for i in ax4.get_xticks()], rotation=45, ha='right', fontsize = fontsize)
     
     plt.tight_layout()
+    plt.savefig('error_analysis.png', bbox_inches = 'tight')
     plt.show()
     
-    plt.savefig('error_analysis.png', bbox_inches = 'tight')
